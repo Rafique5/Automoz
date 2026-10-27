@@ -7,6 +7,7 @@ import model.TipoVeiculo;
 import model.Veiculo;
 
 import java.util.Scanner;
+import java.util.concurrent.CountDownLatch;
 
 public class MenuService {
     private final Scanner input;
@@ -22,8 +23,10 @@ public class MenuService {
     public void registarVeiculo() {
         String marca = lerTexto("Marca: ");
         String modelo = lerTexto("Modelo: ");
-        double preco = lerDouble("Preco de venda ou mensalidade base: ");
-        Veiculo veiculo = automozService.registarVeiculo(marca, modelo, preco, lerTipo());
+        TipoVeiculo tipo = lerTipo();
+        String promptPreco = tipo == TipoVeiculo.VENDA ? "Preco de venda: " : "Mensalidade: ";
+        double preco = lerDouble(promptPreco);
+        Veiculo veiculo = automozService.registarVeiculo(marca, modelo, preco, tipo);
         System.out.println("Veiculo registado com ID " + veiculo.getId());
     }
 
@@ -36,8 +39,10 @@ public class MenuService {
             return;
         }
         TipoVeiculo intencao = lerTipoCliente();
+        String cartaConducao = intencao == TipoVeiculo.ALUGUER
+                ? lerTexto("Carta de conducao: ") : "";
         Cliente cliente = automozService.registarCliente(nome, email, contacto,
-                lerTexto("Carta de conducao: "), intencao);
+                cartaConducao, intencao);
         System.out.println("Cliente registado com ID " + cliente.getId());
     }
 
@@ -60,6 +65,55 @@ public class MenuService {
         String idCliente = lerTexto("ID do cliente (ex.: CALG300001 ou CVD780001): ");
         Reserva reserva = automozService.criarReserva(idCliente, lerInteiro("ID do veiculo: "));
         System.out.println("Reserva " + reserva.getId() + " criada; expira em " + reserva.getDataExpiracao());
+    }
+
+    /** Lança dois pedidos em paralelo para demonstrar a exclusão mútua na reserva. */
+    public void simularReservasConcorrentes() {
+        listarVeiculos();
+        int idVeiculo = lerInteiro("ID de um veiculo de aluguer disponivel: ");
+        final String[] clientes = {
+                lerTexto("ID do primeiro cliente de aluguer: "),
+                lerTexto("ID do segundo cliente de aluguer: ")
+        };
+        final int veiculo = idVeiculo;
+        final String[] resultados = new String[2];
+        final CountDownLatch prontos = new CountDownLatch(2);
+        final CountDownLatch iniciar = new CountDownLatch(1);
+        Thread[] pedidos = new Thread[2];
+
+        for (int i = 0; i < pedidos.length; i++) {
+            final int indice = i;
+            pedidos[i] = new Thread(new Runnable() {
+                @Override public void run() {
+                    prontos.countDown();
+                    try {
+                        iniciar.await();
+                        Reserva reserva = automozService.criarReserva(clientes[indice], veiculo);
+                        resultados[indice] = "Reserva criada: " + reserva.getId();
+                    } catch (IllegalArgumentException | IllegalStateException e) {
+                        resultados[indice] = "Pedido recusado: " + e.getMessage();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        resultados[indice] = "Pedido interrompido.";
+                    }
+                }
+            }, "pedido-reserva-" + (i + 1));
+            pedidos[i].start();
+        }
+
+        try {
+            prontos.await();
+            iniciar.countDown();
+            for (Thread pedido : pedidos) pedido.join();
+        } catch (InterruptedException e) {
+            iniciar.countDown();
+            for (Thread pedido : pedidos) pedido.interrupt();
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("A simulacao concorrente foi interrompida.", e);
+        }
+
+        System.out.println("Resultado do primeiro cliente: " + resultados[0]);
+        System.out.println("Resultado do segundo cliente: " + resultados[1]);
     }
 
     public void formalizarContrato() {

@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Camada de servico: centraliza regras e casos de uso da aplicacao. */
 public class AutomozService {
@@ -47,7 +48,8 @@ public class AutomozService {
         return cliente;
     }
 
-    public Reserva criarReserva(String idCliente, int idVeiculo) {
+    /** Serializa pedidos concorrentes para que um veiculo só possa ser reservado uma vez. */
+    public synchronized Reserva criarReserva(String idCliente, int idVeiculo) {
         Cliente cliente = obterCliente(idCliente);
         Veiculo veiculo = obterVeiculo(idVeiculo);
         String id = "R" + proximaReserva;
@@ -58,7 +60,32 @@ public class AutomozService {
     }
 
     /** Confirma a reserva e cria o contrato correspondente ao tipo de veiculo. */
-    public Contracto formalizarContrato(String idReserva, int numeroMeses) {
+    /** Formaliza o contrato num worker thread e devolve o resultado ao chamador. */
+    public Contracto formalizarContrato(final String idReserva, final int numeroMeses) {
+        final AtomicReference<Contracto> resultado = new AtomicReference<Contracto>();
+        final AtomicReference<RuntimeException> erro = new AtomicReference<RuntimeException>();
+        Thread threadAluguer = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    resultado.set(formalizarContratoComSeguranca(idReserva, numeroMeses));
+                } catch (RuntimeException e) {
+                    erro.set(e);
+                }
+            }
+        }, "formalizacao-aluguer");
+        threadAluguer.start();
+        try {
+            threadAluguer.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("A formalizacao do aluguer foi interrompida.", e);
+        }
+        if (erro.get() != null) throw erro.get();
+        return resultado.get();
+    }
+
+    /** A secção crítica protege o estado partilhado quando vários workers formalizam contratos. */
+    private synchronized Contracto formalizarContratoComSeguranca(String idReserva, int numeroMeses) {
         Reserva reserva = obterReserva(idReserva);
         Contracto contrato = contractoService.formalizar("C" + proximoContracto, reserva, numeroMeses);
         contractos.add(contrato);

@@ -27,6 +27,7 @@ public class AutomozMenu {
                     case 7: menuService.cancelarReserva(); break;
                     case 8: menuService.listarReservas(); break;
                     case 9: menuService.listarContratos(); break;
+                    case 10: menuService.simularReservasConcorrentes(); break;
                     case 0: continuar = false; break;
                     default: System.out.println("Opcao invalida.");
                 }
@@ -40,7 +41,8 @@ public class AutomozMenu {
     private void mostrarMenu() {
         System.out.println("\n=== AUTOMOZ ===");
         System.out.println("1. Registar veiculo\n2. Registar cliente\n3. Listar veiculos\n4. Listar clientes\n5. Criar reserva");
-        System.out.println("6. Confirmar reserva e formalizar contrato\n7. Cancelar reserva\n8. Listar reservas\n9. Listar contratos\n0. Sair");
+        System.out.println("6. Confirmar reserva e formalizar contrato\n7. Cancelar reserva\n8. Listar reservas\n9. Listar contratos");
+        System.out.println("10. Simular dois clientes a reservar o mesmo veiculo em simultaneo\n0. Sair");
     }
 
     private int lerInteiro(String prompt) {
