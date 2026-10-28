@@ -4,27 +4,37 @@ import model.Cliente;
 import model.ContractoAluguer;
 import model.TipoVeiculo;
 import model.Veiculo;
+import model.PeriodoAluguer;
 
 import java.time.LocalDateTime;
 
 public class ContractoAluguerService {
-    public ContractoAluguer criar(String id, Cliente cliente, Veiculo veiculo, int numeroMeses,
-                                  double mensalidade, LocalDateTime dataAssinatura) {
+    public ContractoAluguer criar(String id, Cliente cliente, Veiculo veiculo, PeriodoAluguer periodo,
+                                  LocalDateTime dataInicio, double mensalidade, LocalDateTime dataAssinatura) {
         if (veiculo == null || veiculo.getTipo() != TipoVeiculo.ALUGUER)
             throw new IllegalArgumentException("O contrato de aluguer exige um veiculo do tipo aluguer.");
-        if (numeroMeses < 1 || numeroMeses > 6)
-            throw new IllegalArgumentException("A duracao do aluguer deve ser entre 1 e 6 meses.");
+        if (periodo == null) throw new IllegalArgumentException("O periodo do aluguer e obrigatorio.");
         if (mensalidade <= 0 || Double.isNaN(mensalidade) || Double.isInfinite(mensalidade))
             throw new IllegalArgumentException("A mensalidade deve ser maior que zero.");
         validarBase(id, cliente, veiculo);
         LocalDateTime assinatura = dataAssinatura == null ? LocalDateTime.now() : dataAssinatura;
-        return new ContractoAluguer(id, cliente, veiculo, assinatura, null, null, numeroMeses,
-                assinatura.plusMonths(numeroMeses), mensalidade);
+        LocalDateTime inicio = dataInicio == null ? assinatura : dataInicio;
+        LocalDateTime fim;
+        switch (periodo) {
+            case UM_DIA: fim = inicio.plusDays(1); break;
+            case DOIS_DIAS: fim = inicio.plusDays(2); break;
+            case SEMANAL: fim = inicio.plusWeeks(1); break;
+            case MENSAL: fim = inicio.plusMonths(1); break;
+            default: throw new IllegalArgumentException("Periodo de aluguer nao suportado.");
+        }
+        return new ContractoAluguer(id, cliente, veiculo, assinatura, null, null, periodo, null, inicio, fim, mensalidade);
     }
 
     public double calcularValorTotal(ContractoAluguer contrato) {
         validar(contrato);
-        return contrato.getMensalidadeFixa() * contrato.getNumeroMeses();
+        if (contrato.getMesesLegados() != null)
+            return contrato.getMensalidadeFixa() * contrato.getMesesLegados();
+        return contrato.getMensalidadeFixa() * contrato.getPeriodo().getDiasCobrados() / 30.0;
     }
 
     public boolean estaExpirado(ContractoAluguer contrato, LocalDateTime dataReferencia) {
@@ -35,8 +45,8 @@ public class ContractoAluguerService {
 
     public void validar(ContractoAluguer contrato) {
         if (contrato == null) throw new IllegalArgumentException("Contrato de aluguer obrigatorio.");
-        if (contrato.getNumeroMeses() < 1 || contrato.getNumeroMeses() > 6)
-            throw new IllegalArgumentException("A duracao do aluguer deve ser entre 1 e 6 meses.");
+        if (contrato.getMesesLegados() == null && (contrato.getPeriodo() == null || contrato.getDataInicio() == null))
+            throw new IllegalArgumentException("Periodo e data de inicio do aluguer sao obrigatorios.");
         if (contrato.getMensalidadeFixa() <= 0 || Double.isNaN(contrato.getMensalidadeFixa()) ||
                 Double.isInfinite(contrato.getMensalidadeFixa()) || contrato.getDataFim() == null)
             throw new IllegalArgumentException("Dados do contrato de aluguer invalidos.");

@@ -5,6 +5,7 @@ import model.Contracto;
 import model.Reserva;
 import model.TipoVeiculo;
 import model.Veiculo;
+import model.PeriodoAluguer;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -21,30 +22,32 @@ public class AutomozService {
     private final Map<String, Reserva> reservas = new LinkedHashMap<String, Reserva>();
     private final List<Contracto> contractos = new ArrayList<Contracto>();
     private int proximoVeiculo = 1;
-    private int proximoClienteAluguer = 1;
-    private int proximoClienteVenda = 1;
-    private int proximaReserva = 1;
-    private int proximoContracto = 1;
     private final ClienteService clienteService = new ClienteService();
     private final VeiculoService veiculoService = new VeiculoService();
     private final ReservaService reservaService = new ReservaService();
     private final ContractoService contractoService = new ContractoService();
+    private final AutomozRepository repository = new AutomozRepository();
+
+    public AutomozService() {
+        repository.carregar(veiculos, clientes, reservas, contractos);
+    }
 
     public Veiculo registarVeiculo(String marca, String modelo, double preco, TipoVeiculo tipo) {
+        proximoVeiculo = repository.proximoVeiculo();
         Veiculo veiculo = veiculoService.criar(proximoVeiculo, marca, modelo, preco, tipo);
+        repository.guardar(veiculo);
         veiculos.put(proximoVeiculo++, veiculo);
         return veiculo;
     }
 
     public Cliente registarCliente(String nome, String email, String contacto, String cartaConducao, TipoVeiculo intencao) {
         String id;
-        if (intencao == TipoVeiculo.ALUGUER) id = "CALG300" + String.format("%03d", proximoClienteAluguer);
-        else if (intencao == TipoVeiculo.VENDA) id = "CVD780" + String.format("%03d", proximoClienteVenda);
+        if (intencao == TipoVeiculo.ALUGUER) id = "CALG300" + String.format("%03d", repository.proximoId("clientes", "id", "CALG300"));
+        else if (intencao == TipoVeiculo.VENDA) id = "CVD780" + String.format("%03d", repository.proximoId("clientes", "id", "CVD780"));
         else throw new IllegalArgumentException("Intencao do cliente invalida.");
         Cliente cliente = clienteService.criar(id, nome, email, contacto, cartaConducao, intencao);
+        repository.guardar(cliente);
         clientes.put(id, cliente);
-        if (intencao == TipoVeiculo.ALUGUER) proximoClienteAluguer++;
-        else proximoClienteVenda++;
         return cliente;
     }
 
@@ -52,22 +55,24 @@ public class AutomozService {
     public synchronized Reserva criarReserva(String idCliente, int idVeiculo) {
         Cliente cliente = obterCliente(idCliente);
         Veiculo veiculo = obterVeiculo(idVeiculo);
-        String id = "R" + proximaReserva;
+        String id = "R" + repository.proximoId("reservas", "id", "R");
         Reserva reserva = reservaService.criar(id, cliente, veiculo, LocalDateTime.now());
+        repository.guardar(reserva);
+        repository.atualizar(veiculo);
         reservas.put(id, reserva);
-        proximaReserva++;
         return reserva;
     }
 
     /** Confirma a reserva e cria o contrato correspondente ao tipo de veiculo. */
     /** Formaliza o contrato num worker thread e devolve o resultado ao chamador. */
-    public Contracto formalizarContrato(final String idReserva, final int numeroMeses) {
+    public Contracto formalizarContrato(final String idReserva, final PeriodoAluguer periodo,
+                                        final LocalDateTime dataInicio) {
         final AtomicReference<Contracto> resultado = new AtomicReference<Contracto>();
         final AtomicReference<RuntimeException> erro = new AtomicReference<RuntimeException>();
         Thread threadAluguer = new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    resultado.set(formalizarContratoComSeguranca(idReserva, numeroMeses));
+                    resultado.set(formalizarContratoComSeguranca(idReserva, periodo, dataInicio));
                 } catch (RuntimeException e) {
                     erro.set(e);
                 }
@@ -85,20 +90,32 @@ public class AutomozService {
     }
 
     /** A secção crítica protege o estado partilhado quando vários workers formalizam contratos. */
-    private synchronized Contracto formalizarContratoComSeguranca(String idReserva, int numeroMeses) {
+    private synchronized Contracto formalizarContratoComSeguranca(String idReserva, PeriodoAluguer periodo,
+                                                                  LocalDateTime dataInicio) {
         Reserva reserva = obterReserva(idReserva);
-        Contracto contrato = contractoService.formalizar("C" + proximoContracto, reserva, numeroMeses);
+        Contracto contrato = contractoService.formalizar("C" + repository.proximoId("contratos", "id", "C"),
+                reserva, periodo, dataInicio);
+        repository.guardar(contrato, reserva);
+        repository.atualizar(reserva);
+        repository.atualizar(contrato.getVeiculo());
         contractos.add(contrato);
-        proximoContracto++;
         return contrato;
     }
 
     public void cancelarReserva(String idReserva) {
-        reservaService.cancelar(obterReserva(idReserva));
+        Reserva reserva = obterReserva(idReserva);
+        reservaService.cancelar(reserva);
+        repository.atualizar(reserva);
+        repository.atualizar(reserva.getVeiculo());
     }
 
     public void atualizarReservasExpiradas() {
-        for (Reserva reserva : reservas.values()) reservaService.expirarSeNecessario(reserva);
+        for (Reserva reserva : reservas.values()) {
+            if (reservaService.expirarSeNecessario(reserva)) {
+                repository.atualizar(reserva);
+                repository.atualizar(reserva.getVeiculo());
+            }
+        }
     }
 
     public List<Veiculo> listarVeiculos() { return Collections.unmodifiableList(new ArrayList<Veiculo>(veiculos.values())); }

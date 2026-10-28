@@ -5,7 +5,12 @@ import model.Contracto;
 import model.Reserva;
 import model.TipoVeiculo;
 import model.Veiculo;
+import model.PeriodoAluguer;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Scanner;
 import java.util.concurrent.CountDownLatch;
 
@@ -119,9 +124,36 @@ public class MenuService {
     public void formalizarContrato() {
         listarReservas();
         String idReserva = lerTexto("ID da reserva: ");
-        int meses = lerInteiro("Duracao do aluguer (1 a 6 meses; para venda introduza 0): ");
-        Contracto contrato = automozService.formalizarContrato(idReserva, meses);
+        Reserva reservaEscolhida = null;
+        for (Reserva reserva : automozService.listarReservas())
+            if (reserva.getId().equalsIgnoreCase(idReserva.trim())) reservaEscolhida = reserva;
+
+        PeriodoAluguer periodo = null;
+        LocalDateTime dataInicio = null;
+        if (reservaEscolhida != null && reservaEscolhida.getVeiculo().getTipo() == TipoVeiculo.ALUGUER) {
+            System.out.println("Periodo: 1. 1 dia | 2. 2 dias | 3. Semanal | 4. Mensal");
+            switch (lerInteiro("Escolha o periodo: ")) {
+                case 1: periodo = PeriodoAluguer.UM_DIA; break;
+                case 2: periodo = PeriodoAluguer.DOIS_DIAS; break;
+                case 3: periodo = PeriodoAluguer.SEMANAL; break;
+                case 4: periodo = PeriodoAluguer.MENSAL; break;
+                default: throw new IllegalArgumentException("Escolha um periodo entre 1 e 4.");
+            }
+            dataInicio = lerDataInicioAluguer();
+        }
+        Contracto contrato = automozService.formalizarContrato(idReserva, periodo, dataInicio);
         System.out.println("Contrato " + contrato.getId() + " formalizado. Total: " + automozService.calcularValorContrato(contrato));
+    }
+
+    private LocalDateTime lerDataInicioAluguer() {
+        DateTimeFormatter formato = DateTimeFormatter.ofPattern("dd/MM/uuuu");
+        while (true) {
+            System.out.print("Data de inicio (dd/MM/aaaa; Enter ou HOJE para hoje): ");
+            String valor = input.nextLine().trim();
+            if (valor.isEmpty() || "HOJE".equalsIgnoreCase(valor)) return LocalDate.now().atStartOfDay();
+            try { return LocalDate.parse(valor, formato).atStartOfDay(); }
+            catch (DateTimeParseException e) { System.out.println("Data invalida. Use o formato dd/MM/aaaa."); }
+        }
     }
 
     public void cancelarReserva() {
@@ -138,9 +170,19 @@ public class MenuService {
 
     public void listarContratos() {
         if (automozService.listarContratos().isEmpty()) { System.out.println("Ainda nao existem contratos."); return; }
-        for (Contracto c : automozService.listarContratos())
+        for (Contracto c : automozService.listarContratos()) {
+            String detalheAluguer = "";
+            if (c instanceof model.ContractoAluguer) {
+                model.ContractoAluguer aluguer = (model.ContractoAluguer) c;
+                String periodo = aluguer.getPeriodo() == null
+                        ? aluguer.getMesesLegados() + " mes(es) (contrato antigo)"
+                        : aluguer.getPeriodo().getDescricao();
+                detalheAluguer = " | periodo: " + periodo + " | inicio: " + aluguer.getDataInicio().toLocalDate();
+            }
             System.out.println(c.getId() + " | " + c.getClass().getSimpleName() + " | " + c.getCliente().getNome() +
-                    " | veiculo #" + c.getVeiculo().getId() + " | total: " + automozService.calcularValorContrato(c));
+                    " | veiculo #" + c.getVeiculo().getId() + detalheAluguer +
+                    " | total: " + automozService.calcularValorContrato(c));
+        }
     }
 
     private TipoVeiculo lerTipo() {
