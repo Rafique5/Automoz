@@ -11,10 +11,16 @@ import model.EstadoVeiculo;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 
 /** Camada de servico: centraliza regras e casos de uso da aplicacao. */
 public class AutomozService {
@@ -28,12 +34,32 @@ public class AutomozService {
     private final ReservaService reservaService = new ReservaService();
     private final ContractoService contractoService = new ContractoService();
     private final AutomozRepository repository = new AutomozRepository();
+    private final BarramentoEventos eventos = new BarramentoEventos();
+    private final OuvinteNotificacoesGestor notificacoes = new OuvinteNotificacoesGestor();
+    private final Set<String> prazosNotificados = new HashSet<String>();
+    private final ScheduledExecutorService agendador;
 
     public AutomozService() {
         repository.criarFuncionarioInicial(System.getenv().getOrDefault("AUTOMOZ_ADMIN_USER", "admin"),
                 System.getenv().getOrDefault("AUTOMOZ_ADMIN_PASSWORD", "admin123"));
         repository.prepararSequencias();
         repository.carregar(veiculos, clientes, reservas, contractos);
+        eventos.subscrever(notificacoes);
+        agendador = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
+            @Override public Thread newThread(Runnable tarefa) {
+                Thread thread = new Thread(tarefa, "automoz-verificacao-reservas");
+                thread.setDaemon(true);
+                return thread;
+            }
+        });
+        agendador.scheduleWithFixedDelay(new Runnable() {
+            @Override public void run() {
+                try { atualizarReservasExpiradas(); }
+                catch (RuntimeException e) {
+                    System.err.println("Falha na verificacao automatica de reservas: " + e.getMessage());
+                }
+            }
+        }, 1, 30, TimeUnit.SECONDS);
     }
 
     public Veiculo registarVeiculo(String marca, String modelo, double preco, TipoVeiculo tipo) {
@@ -85,6 +111,8 @@ public class AutomozService {
         Reserva reserva = reservaService.criar(id, cliente, veiculo, LocalDateTime.now(), inicioUtilizacao, periodo);
         repository.criarReserva(reserva);
         reservas.put(id, reserva);
+        eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.RESERVA_CRIADA, id,
+                cliente.getNome() + " reservou " + veiculo.getMarca() + " " + veiculo.getModelo()));
         return reserva;
     }
 
@@ -123,18 +151,30 @@ public class AutomozService {
                 dataInicio == null ? reserva.getDataInicioUtilizacao() : dataInicio);
         repository.guardarContrato(contrato, reserva);
         contractos.add(contrato);
+        eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.PEDIDO_APROVADO, reserva.getId(), ""));
+        eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.CONTRATO_CRIADO, reserva.getId(), contrato.getId()));
         return contrato;
     }
 
-    public void cancelarReserva(String idReserva) {
+    public synchronized void cancelarReserva(String idReserva) {
         Reserva reserva = obterReserva(idReserva);
         repository.cancelarReserva(reserva);
+        eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.RESERVA_CANCELADA, reserva.getId(),
+                "Veiculo #" + reserva.getVeiculo().getId() + " libertado."));
     }
 
     public synchronized void atualizarReservasExpiradas() {
+        LocalDateTime agora = LocalDateTime.now();
         for (Reserva reserva : reservas.values()) {
             if (reservaService.expirarSeNecessario(reserva)) {
                 repository.atualizarReserva(reserva);
+                prazosNotificados.remove(reserva.getId());
+                eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.RESERVA_EXPIRADA, reserva.getId(),
+                        "Veiculo #" + reserva.getVeiculo().getId() + " libertado."));
+            } else if (reserva.getEstado() == model.EstadoReserva.ACTIVA
+                    && !reserva.getDataExpiracao().isAfter(agora.plusHours(24))
+                    && prazosNotificados.add(reserva.getId())) {
+                eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.PRAZO_RESERVA_A_TERMINAR, reserva.getId(), ""));
             }
         }
         Map<Integer,EstadoVeiculo> estados=repository.atualizarEstadosVeiculos();
@@ -142,10 +182,32 @@ public class AutomozService {
     }
 
     public synchronized void expirarReserva(Reserva reserva) {
-        if(reservaService.expirarSeNecessario(reserva))repository.atualizarReserva(reserva);
+        if(reservaService.expirarSeNecessario(reserva)) {
+            repository.atualizarReserva(reserva);
+            prazosNotificados.remove(reserva.getId());
+            eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.RESERVA_EXPIRADA, reserva.getId(),
+                    "Veiculo #" + reserva.getVeiculo().getId() + " libertado."));
+        }
     }
 
-    public synchronized void devolverVeiculo(int idVeiculo){repository.devolverVeiculo(idVeiculo,contractos,new ArrayList<Reserva>(reservas.values()));}
+    public synchronized void devolverVeiculo(int idVeiculo){
+        repository.devolverVeiculo(idVeiculo,contractos,new ArrayList<Reserva>(reservas.values()));
+        eventos.publicar(new EventoAutomoz(EventoAutomoz.Tipo.DEVOLUCAO_REGISTADA, null,
+                "Veiculo #" + idVeiculo + " devolvido."));
+    }
+
+    public String seguinteNotificacao() { return notificacoes.seguinte(); }
+
+    public void fechar() {
+        agendador.shutdown();
+        try {
+            if (!agendador.awaitTermination(5, TimeUnit.SECONDS)) agendador.shutdownNow();
+        } catch (InterruptedException e) {
+            agendador.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        eventos.close();
+    }
 
     public Cliente obterClientePublico(String id){return obterCliente(id);}
 

@@ -17,23 +17,28 @@ public class AutomozMenu {
         try { service = new AutomozService(); }
         catch (IllegalStateException e) { System.out.println("Nao foi possivel iniciar o Automoz: " + e.getMessage()); return; }
         MenuService menu = new MenuService(input, service);
-        boolean executar = true;
-        while (executar) {
-            System.out.println("\n=== AUTOMOZ | ACESSO ===\n1. Cliente\n2. Funcionario\n0. Sair");
-            try {
-                switch (lerInteiro("Opcao: ")) {
-                    case 1: fluxoAcessoCliente(menu, service); break;
-                    case 2:
-                        if (autenticarFuncionario(service)) executarPainelFuncionario(menu, service);
-                        break;
-                    case 0: executar = false; break;
-                    default: System.out.println("Opcao invalida.");
+        try {
+            boolean executar = true;
+            while (executar) {
+                System.out.println("\n=== AUTOMOZ | ACESSO ===\n1. Cliente\n2. Funcionario\n0. Sair");
+                try {
+                    switch (lerInteiro("Opcao: ")) {
+                        case 1: fluxoAcessoCliente(menu, service); break;
+                        case 2:
+                            if (autenticarFuncionario(service)) executarPainelFuncionario(menu, service);
+                            break;
+                        case 0: executar = false; break;
+                        default: System.out.println("Opcao invalida.");
+                    }
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    System.out.println("Operacao recusada: " + e.getMessage());
                 }
-            } catch (IllegalArgumentException | IllegalStateException e) {
-                System.out.println("Operacao recusada: " + e.getMessage());
             }
+        } finally {
+            service.fechar();
+            mostrarNotificacoes(service);
+            input.close();
         }
-        input.close();
     }
 
     private void fluxoAcessoCliente(MenuService menu,AutomozService service) {
@@ -97,6 +102,7 @@ public class AutomozMenu {
         boolean voltar=false;
         while(!voltar) {
             service.atualizarReservasExpiradas();
+            mostrarNotificacoes(service);
             mostrarMenuFuncionario();
             try {
                 switch(lerInteiro("Opcao: ")) {
@@ -117,6 +123,12 @@ public class AutomozMenu {
                 }
             } catch(IllegalArgumentException|IllegalStateException e){System.out.println("Operacao recusada: "+e.getMessage());}
         }
+    }
+
+    private void mostrarNotificacoes(AutomozService service) {
+        String notificacao;
+        while ((notificacao = service.seguinteNotificacao()) != null)
+            System.out.println("[ALERTA AO FUNCIONARIO] " + notificacao);
     }
 
     private void mostrarMenuFuncionario() {

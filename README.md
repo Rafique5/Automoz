@@ -154,7 +154,7 @@ O preço registado para um veículo de aluguer continua a ser a mensalidade. Par
 | `CONFIRMADA` | Reserva usada para formalizar um contrato. |
 | `CANCELADA` | Reserva cancelada; o intervalo deixa de bloquear novas reservas. |
 
-Fluxo normal: `DISPONIVEL` → `RESERVADO` → `ALUGADO` ou `VENDIDO`. Um aluguer futuro pode ser reservado depois do fim do intervalo atual; a aplicação recalcula os estados ao início de cada iteração do menu. A expiração e a transição por calendário são atualizadas quando o menu é atualizado, não por uma thread temporizada.
+Fluxo normal: `DISPONIVEL` → `RESERVADO` → `ALUGADO` ou `VENDIDO`. Um aluguer futuro pode ser reservado depois do fim do intervalo atual; estados e expirações também são verificados em segundo plano a cada 30 segundos.
 
 ## Concorrência
 
@@ -162,7 +162,13 @@ A opção 10 em `MenuService.simularReservasConcorrentes()` inicia três threads
 
 O método `AutomozService.criarReserva()` é `synchronized` e a operação SQL usa transação, bloqueio `SELECT ... FOR UPDATE` do veículo e verificação de interseção de datas. Isto protege inclusive quando duas instâncias do serviço disputam o mesmo veículo. A tabela `automoz_sequencias` coordena a geração de IDs.
 
-`AutomozService.formalizarContrato()` também cria uma thread para formalizar o contrato e espera imediatamente por ela com `join()`. Portanto, esse método executa o trabalho noutra thread, mas o chamador continua bloqueado até terminar; não permite que a interface prossiga em paralelo. A secção que altera contratos é sincronizada por `formalizarContratoComSeguranca()`.
+`AutomozService.formalizarContrato()` também cria uma thread para formalizar o contrato e espera imediatamente por ela com `join()`. Esse fluxo continua síncrono para devolver o resultado ao menu; a comunicação assíncrona é aplicada ao envio e processamento de eventos.
+
+## Orientado a eventos
+
+`AutomozService` publica eventos depois de a operação correspondente ser persistida. `BarramentoEventos` entrega-os numa fila processada por um worker dedicado, sem bloquear o fluxo do pedido. O ouvinte `OuvinteNotificacoesGestor` converte os eventos em alertas, que o painel do funcionário consome na próxima iteração. São publicados eventos de reserva criada, prazo a terminar (até 24 horas), reserva expirada ou cancelada, pedido aprovado, contrato criado e devolução registada. Um agendador verifica prazos e expirações a cada 30 segundos.
+
+A aplicação é um programa de consola local com um único processo. Por isso, o barramento assíncrono interno resolve o desacoplamento entre regras de negócio e notificações sem exigir um broker externo. JMS/ActiveMQ faria sentido se o sistema fosse separado em processos/serviços ou precisasse de filas duráveis e entrega entre máquinas; os alertas atuais são apenas em memória e não são recuperados após encerrar a aplicação.
 
 ## Organização do código
 
