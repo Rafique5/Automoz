@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS clientes (
   email VARCHAR(190) NOT NULL,
   contacto CHAR(9) NOT NULL,
   carta_conducao VARCHAR(100) NOT NULL DEFAULT '',
-  intencao ENUM('VENDA','ALUGUER') NOT NULL
+  UNIQUE KEY uq_clientes_email (email)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS reservas (
@@ -26,10 +26,24 @@ CREATE TABLE IF NOT EXISTS reservas (
   veiculo_id INT NOT NULL,
   data_reserva DATETIME NOT NULL,
   data_expiracao DATETIME NOT NULL,
+  data_inicio_utilizacao DATETIME NULL,
+  data_fim_utilizacao DATETIME NULL,
+  periodo ENUM('UM_DIA','DOIS_DIAS','SEMANAL','MENSAL') NULL,
   estado ENUM('ACTIVA','EXPIRADA','CONFIRMADA','CANCELADA') NOT NULL,
   CONSTRAINT fk_reserva_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id),
   CONSTRAINT fk_reserva_veiculo FOREIGN KEY (veiculo_id) REFERENCES veiculos(id),
   INDEX idx_reserva_estado (estado)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS funcionarios (
+  utilizador VARCHAR(80) PRIMARY KEY,
+  sal_base64 VARCHAR(64) NOT NULL,
+  hash_senha_base64 VARCHAR(128) NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS automoz_sequencias (
+  entidade VARCHAR(32) PRIMARY KEY,
+  proximo BIGINT NOT NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS contratos (

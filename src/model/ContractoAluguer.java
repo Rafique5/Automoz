@@ -25,4 +25,5 @@ public class ContractoAluguer extends Contracto {
     public LocalDateTime getDataInicio() { return dataInicio; }
     public double getMensalidadeFixa() { return mensalidadeFixa; }
     public LocalDateTime getDataFim() { return dataFim; }
+    public void setDataFim(LocalDateTime dataFim) { this.dataFim = dataFim; }
 }

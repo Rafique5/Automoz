@@ -14,11 +14,19 @@ public final class Database {
     private Database() { }
 
     public static Connection conectar() throws SQLException {
+        try {
+            // Dá um diagnóstico claro quando a aplicação é executada sem a dependência Maven no classpath.
+            Class.forName("com.mysql.cj.jdbc.Driver");
+        } catch (ClassNotFoundException e) {
+            throw new SQLException("MySQL Connector/J nao esta no classpath. Reimporte pom.xml como projeto Maven " +
+                    "no IntelliJ e execute novamente.", e);
+        }
         return DriverManager.getConnection(URL, USER, PASSWORD);
     }
 
     public static IllegalStateException erro(SQLException e) {
-        return new IllegalStateException("Falha de acesso a MySQL. Confirme que o MySQL do XAMPP esta iniciado, " +
-                "que database/automoz.sql foi importado e que a configuracao AUTOMOZ_DB_URL/USER/PASSWORD esta correta. " + e.getMessage(), e);
+        return new IllegalStateException("Falha de acesso a MySQL. " + e.getMessage() + " Confirme também que o " +
+                "MySQL do XAMPP esta iniciado, que database/automoz.sql foi importado e que a configuracao " +
+                "AUTOMOZ_DB_URL/USER/PASSWORD esta correta.", e);
     }
 }

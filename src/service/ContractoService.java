@@ -17,19 +17,21 @@ public class ContractoService {
     private final VeiculoService veiculoService = new VeiculoService();
 
     public Contracto formalizar(String id, Reserva reserva, PeriodoAluguer periodo, LocalDateTime dataInicio) {
+        Contracto contrato = preparar(id, reserva, periodo, dataInicio);
+        reservaService.confirmar(reserva);
+        if (contrato.getVeiculo().getTipo() == TipoVeiculo.VENDA) veiculoService.marcarComoVendido(contrato.getVeiculo());
+        else veiculoService.marcarComoAlugado(contrato.getVeiculo());
+        return contrato;
+    }
+
+    public Contracto preparar(String id, Reserva reserva, PeriodoAluguer periodo, LocalDateTime dataInicio) {
         if (reserva == null) throw new IllegalArgumentException("Reserva obrigatoria para formalizar contrato.");
         Veiculo veiculo = reserva.getVeiculo();
-        Contracto contrato;
         if (veiculo.getTipo() == TipoVeiculo.VENDA) {
-            contrato = vendaService.criar(id, reserva.getCliente(), veiculo, LocalDateTime.now());
-        } else {
-            contrato = aluguerService.criar(id, reserva.getCliente(), veiculo, periodo, dataInicio,
-                    veiculo.getPreco(), LocalDateTime.now());
+            return vendaService.criar(id, reserva.getCliente(), veiculo, LocalDateTime.now());
         }
-        reservaService.confirmar(reserva);
-        if (veiculo.getTipo() == TipoVeiculo.VENDA) veiculoService.marcarComoVendido(veiculo);
-        else veiculoService.marcarComoAlugado(veiculo);
-        return contrato;
+        return aluguerService.criar(id, reserva.getCliente(), veiculo, periodo, dataInicio,
+                    veiculo.getPreco(), LocalDateTime.now());
     }
 
     public double calcularValorTotal(Contracto contrato) {

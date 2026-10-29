@@ -6,6 +6,7 @@ import model.Reserva;
 import model.TipoVeiculo;
 import model.Veiculo;
 import model.PeriodoAluguer;
+import model.EstadoVeiculo;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -29,6 +30,9 @@ public class AutomozService {
     private final AutomozRepository repository = new AutomozRepository();
 
     public AutomozService() {
+        repository.criarFuncionarioInicial(System.getenv().getOrDefault("AUTOMOZ_ADMIN_USER", "admin"),
+                System.getenv().getOrDefault("AUTOMOZ_ADMIN_PASSWORD", "admin123"));
+        repository.prepararSequencias();
         repository.carregar(veiculos, clientes, reservas, contractos);
     }
 
@@ -40,25 +44,46 @@ public class AutomozService {
         return veiculo;
     }
 
-    public Cliente registarCliente(String nome, String email, String contacto, String cartaConducao, TipoVeiculo intencao) {
-        String id;
-        if (intencao == TipoVeiculo.ALUGUER) id = "CALG300" + String.format("%03d", repository.proximoId("clientes", "id", "CALG300"));
-        else if (intencao == TipoVeiculo.VENDA) id = "CVD780" + String.format("%03d", repository.proximoId("clientes", "id", "CVD780"));
-        else throw new IllegalArgumentException("Intencao do cliente invalida.");
-        Cliente cliente = clienteService.criar(id, nome, email, contacto, cartaConducao, intencao);
+    public Cliente registarCliente(String nome, String email, String contacto, String cartaConducao) {
+        clienteService.validarEmail(email);
+        if (repository.emailRegistado(email)) throw new IllegalArgumentException("Ja existe um cliente com este email.");
+        String id = "CL" + String.format("%06d", repository.proximoId("clientes", "id", "CL"));
+        Cliente cliente = clienteService.criar(id, nome, email, contacto, cartaConducao);
         repository.guardar(cliente);
         clientes.put(id, cliente);
         return cliente;
     }
 
+    public void validarEmailDisponivel(String email) {
+        clienteService.validarEmail(email);
+        if(repository.emailRegistado(email))throw new IllegalArgumentException("Ja existe um cliente com este email.");
+    }
+
+    public void exigirCliente(String id) { obterCliente(id); }
+
+    public Cliente autenticarCliente(String email,String contacto) {
+        if(email==null||contacto==null)return null;
+        String emailNormalizado=email.trim();
+        clienteService.validarEmail(emailNormalizado);
+        if(!contacto.trim().matches("[0-9]{9}"))throw new IllegalArgumentException("Contacto deve conter exatamente 9 digitos numericos.");
+        for(Cliente cliente:clientes.values())
+            if(cliente.getEmail().equalsIgnoreCase(emailNormalizado)&&cliente.getContacto().equals(contacto.trim()))return cliente;
+        return null;
+    }
+
+    public boolean autenticarFuncionario(String usuario,String senha){return repository.autenticarFuncionario(usuario,senha);}
+    public void alterarSenhaFuncionario(String usuario,String atual,String nova){
+        if(nova==null||nova.length()<8)throw new IllegalArgumentException("A nova palavra-passe deve ter pelo menos 8 caracteres.");
+        repository.alterarSenhaFuncionario(usuario,atual,nova);
+    }
+
     /** Serializa pedidos concorrentes para que um veiculo só possa ser reservado uma vez. */
-    public synchronized Reserva criarReserva(String idCliente, int idVeiculo) {
+    public synchronized Reserva criarReserva(String idCliente, int idVeiculo, LocalDateTime inicioUtilizacao, PeriodoAluguer periodo) {
         Cliente cliente = obterCliente(idCliente);
         Veiculo veiculo = obterVeiculo(idVeiculo);
         String id = "R" + repository.proximoId("reservas", "id", "R");
-        Reserva reserva = reservaService.criar(id, cliente, veiculo, LocalDateTime.now());
-        repository.guardar(reserva);
-        repository.atualizar(veiculo);
+        Reserva reserva = reservaService.criar(id, cliente, veiculo, LocalDateTime.now(), inicioUtilizacao, periodo);
+        repository.criarReserva(reserva);
         reservas.put(id, reserva);
         return reserva;
     }
@@ -93,30 +118,36 @@ public class AutomozService {
     private synchronized Contracto formalizarContratoComSeguranca(String idReserva, PeriodoAluguer periodo,
                                                                   LocalDateTime dataInicio) {
         Reserva reserva = obterReserva(idReserva);
-        Contracto contrato = contractoService.formalizar("C" + repository.proximoId("contratos", "id", "C"),
-                reserva, periodo, dataInicio);
-        repository.guardar(contrato, reserva);
-        repository.atualizar(reserva);
-        repository.atualizar(contrato.getVeiculo());
+        Contracto contrato = contractoService.preparar("C" + repository.proximoId("contratos", "id", "C"),
+                reserva, periodo == null ? reserva.getPeriodo() : periodo,
+                dataInicio == null ? reserva.getDataInicioUtilizacao() : dataInicio);
+        repository.guardarContrato(contrato, reserva);
         contractos.add(contrato);
         return contrato;
     }
 
     public void cancelarReserva(String idReserva) {
         Reserva reserva = obterReserva(idReserva);
-        reservaService.cancelar(reserva);
-        repository.atualizar(reserva);
-        repository.atualizar(reserva.getVeiculo());
+        repository.cancelarReserva(reserva);
     }
 
-    public void atualizarReservasExpiradas() {
+    public synchronized void atualizarReservasExpiradas() {
         for (Reserva reserva : reservas.values()) {
             if (reservaService.expirarSeNecessario(reserva)) {
-                repository.atualizar(reserva);
-                repository.atualizar(reserva.getVeiculo());
+                repository.atualizarReserva(reserva);
             }
         }
+        Map<Integer,EstadoVeiculo> estados=repository.atualizarEstadosVeiculos();
+        for(Map.Entry<Integer,EstadoVeiculo> e:estados.entrySet())if(veiculos.containsKey(e.getKey()))veiculos.get(e.getKey()).setEstado(e.getValue());
     }
+
+    public synchronized void expirarReserva(Reserva reserva) {
+        if(reservaService.expirarSeNecessario(reserva))repository.atualizarReserva(reserva);
+    }
+
+    public synchronized void devolverVeiculo(int idVeiculo){repository.devolverVeiculo(idVeiculo,contractos,new ArrayList<Reserva>(reservas.values()));}
+
+    public Cliente obterClientePublico(String id){return obterCliente(id);}
 
     public List<Veiculo> listarVeiculos() { return Collections.unmodifiableList(new ArrayList<Veiculo>(veiculos.values())); }
     public List<Cliente> listarClientes() { return Collections.unmodifiableList(new ArrayList<Cliente>(clientes.values())); }

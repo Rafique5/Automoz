@@ -1,4 +1,4 @@
-# Automoz
++# Automoz
 
 Sistema de consola em Java para gerir veículos para venda ou aluguer, clientes, reservas e contratos. A aplicação usa MySQL/MariaDB do XAMPP para persistir os dados entre execuções.
 
@@ -18,14 +18,15 @@ Sistema de consola em Java para gerir veículos para venda ou aluguer, clientes,
 ## Funcionalidades
 
 1. Registar veículos para venda ou aluguer.
-2. Registar clientes com intenção de compra ou aluguer.
+2. Registar clientes sem os vincular previamente a uma intenção de venda ou aluguer.
 3. Listar veículos e clientes.
 4. Criar reservas com validade de 48 horas.
 5. Confirmar uma reserva e formalizar o contrato apropriado.
 6. Cancelar uma reserva ativa.
 7. Listar reservas e contratos, incluindo o valor calculado.
-8. Simular dois clientes a tentar reservar simultaneamente o mesmo veículo.
+8. Simular três clientes a tentar reservar simultaneamente um veículo para venda ou aluguer.
 9. Atualizar reservas expiradas quando o menu volta a ser apresentado.
+10. Separar o acesso de cliente do painel autenticado do funcionário.
 
 ## Tecnologias e execução
 
@@ -48,9 +49,25 @@ Depois de configurar a base de dados abaixo, execute `mvn compile exec:java` ou 
 
 4. No terminal, na pasta do projeto, execute `mvn compile exec:java`. Maven descarrega o Connector/J declarado em `pom.xml` na primeira execução, pelo que é necessária ligação à internet nesse momento. Numa IDE, importe `pom.xml` como projeto Maven para incluir o driver.
 
-Se já tiver importado a versão antiga de `automoz.sql`, faça primeiro uma cópia de segurança e execute uma única vez `database/migracao_periodos_aluguer.sql` no phpMyAdmin. Em bases novas, basta importar o `automoz.sql` atualizado. Os contratos antigos mantêm os meses e valores através do campo legado.
+Se já tiver uma base criada pela versão anterior, faça primeiro uma cópia de segurança. Execute uma única vez `database/migracao_periodos_aluguer.sql` se a tabela `contratos` ainda não tiver as colunas `periodo` e `data_inicio`; depois execute `database/migracao_correcoes.sql` para os novos intervalos de reserva, emails únicos, sequências e funcionários. Antes de adicionar a chave única, confirme que não há emails duplicados: `SELECT LOWER(email), COUNT(*) FROM clientes GROUP BY LOWER(email) HAVING COUNT(*) > 1;`. Em bases novas, basta importar o `automoz.sql` atualizado. Os contratos antigos mantêm os meses e valores através do campo legado.
+
+Na primeira execução sem funcionários, é criado o utilizador inicial `admin` com palavra-passe `admin123`. Pode definir `AUTOMOZ_ADMIN_USER` e `AUTOMOZ_ADMIN_PASSWORD` antes de criar a conta inicial; depois de iniciar sessão, use a opção 12 para alterar a palavra-passe. As palavras-passe são guardadas com PBKDF2 e salt. Para clientes já existentes, a inscrição não pede intenção; a carta de condução é opcional no registo e necessária para reservar um veículo de aluguer.
 
 Ao iniciar, o sistema carrega da base os veículos, clientes, reservas e contratos existentes. Novos registos e alterações de estado são gravados no MySQL. Se a conexão falhar, a aplicação apresenta uma mensagem com os passos de configuração; não inicia em modo temporário em memória.
+
+### Corrigir `No suitable driver found`
+
+Este erro significa que o MySQL Connector/J não foi incluído no classpath de execução. No IntelliJ IDEA, abra `pom.xml` e escolha **Add as Maven Project** (ou abra a pasta do projeto e confirme que o `pom.xml` aparece na janela Maven). Na janela Maven, carregue em **Reload All Maven Projects** para descarregar e associar `mysql-connector-j`; depois execute `app.Main` novamente a partir do projeto Maven. A dependência já está declarada em `pom.xml`. Executar apenas o módulo Java antigo `automoz.iml`, sem recarregar o Maven, não carrega essa dependência.
+
+Se definir a URL no PowerShell, coloque-a entre aspas simples para que os caracteres `&` da query string não sejam tratados como operadores:
+
+```powershell
+$env:AUTOMOZ_DB_URL = 'jdbc:mysql://localhost:3306/automoz_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true'
+$env:AUTOMOZ_DB_USER = 'root'
+$env:AUTOMOZ_DB_PASSWORD = ''
+```
+
+As variáveis definidas no terminal só são herdadas por programas iniciados a partir desse terminal. Se executar pela IDE, configure-as na Run Configuration ou mantenha os valores padrão do XAMPP.
 
 ## Utilização
 
@@ -58,17 +75,10 @@ O menu principal apresenta estas opções:
 
 | Opção | Ação |
 |---|---|
-| 1 | Registar veículo |
-| 2 | Registar cliente |
-| 3 | Listar veículos |
-| 4 | Listar clientes |
-| 5 | Criar reserva |
-| 6 | Confirmar reserva e formalizar contrato |
-| 7 | Cancelar reserva |
-| 8 | Listar reservas |
-| 9 | Listar contratos |
-| 10 | Simular duas reservas concorrentes para o mesmo veículo |
+| 1 | Cliente: iniciar sessão ou criar conta |
+| 2 | Funcionário: autenticar e abrir o painel de gestão |
 | 0 | Sair |
+O primeiro ecrã oferece **Cliente** e **Funcionário**. Em Cliente, escolha **Iniciar sessão** ou **Criar conta**. O início de sessão valida o email e o número de telefone registados; se os dados não corresponderem, pode criar uma conta. Após autenticação ou registo, a sessão mantém o cliente identificado e a reserva não pede o seu ID. A opção Funcionário pede utilizador e palavra-passe antes de abrir o painel de gestão.
 
 ### Registar veículo
 
@@ -76,11 +86,11 @@ Introduza marca, modelo, tipo e preço. Para venda, o preço é tratado como pre
 
 ### Registar cliente
 
-Introduza nome, e-mail, contacto e intenção (`ALUGUER` ou `VENDA`). O contacto deve ter exatamente nove algarismos. Clientes de aluguer também têm de indicar carta de condução. O programa atribui IDs separados por intenção: `CALG300001`, `CALG300002`, ... para aluguer e `CVD780001`, `CVD780002`, ... para venda.
+Introduza nome, e-mail, contacto e, opcionalmente, carta de condução. O e-mail é validado durante a inscrição e não pode estar repetido; o contacto deve ter exatamente nove algarismos. Clientes recebem IDs `CL000001`, `CL000002`, ... . A carta é obrigatória quando o cliente reserva um veículo de aluguer.
 
 ### Criar reserva
 
-Escolha um cliente e um veículo compatíveis. O sistema atribui um ID sequencial (`R1`, `R2`, ...) e define a expiração para 48 horas após a criação. O veículo passa a `RESERVADO`.
+Na sessão de cliente, escolha Criar reserva e o sistema associa-a automaticamente à conta autenticada; não é necessário introduzir o ID. No painel do funcionário, o ID do cliente continua a ser solicitado e verificado antes dos detalhes da reserva. Para aluguer, escolha o início e o período. Intervalos sobrepostos são recusados; reservas futuras sem conflito são permitidas. Reservas pendentes expiram em 48 horas.
 
 ### Formalizar contrato
 
@@ -95,32 +105,33 @@ O preço registado para um veículo de aluguer continua a ser a mensalidade. Par
 - ID e nome são obrigatórios.
 - E-mail tem de corresponder ao padrão simples `nome@dominio.extensao`.
 - Contacto deve conter exatamente nove dígitos numéricos.
-- Intenção do cliente é obrigatória e tem de coincidir com o tipo do veículo reservado.
-- Carta de condução é obrigatória para clientes cuja intenção seja aluguer.
+- A inscrição não pede intenção de compra/aluguer.
+- Carta de condução é obrigatória ao reservar um veículo de aluguer.
 
 ### Veículos
 
 - ID tem de ser positivo; marca e modelo não podem estar vazios.
 - Preço/mensalidade tem de ser finito e maior que zero.
 - O tipo é `VENDA` ou `ALUGUER`.
-- Só veículos `DISPONIVEL` podem ser reservados.
-- Um veículo reservado não pode receber outra reserva.
+- Veículos vendidos não podem voltar a ser reservados.
+- Para venda, só pode existir uma reserva ativa por veículo.
+- Para aluguer, reservas podem ser feitas para datas futuras desde que os intervalos não se sobreponham.
 - Alterar tipo só é permitido quando o veículo está disponível. A aplicação de consola não expõe atualmente a edição de veículos.
 
 ### Reservas
 
-- Uma reserva precisa de cliente e veículo válidos, e as intenções/tipos devem coincidir.
+- Uma reserva precisa de cliente e veículo válidos; aluguer também precisa de carta, data de início e período.
 - Uma reserva criada fica `ACTIVA` durante 48 horas.
 - Apenas reservas ativas podem ser confirmadas ou canceladas.
 - A confirmação depois da expiração é recusada.
-- Cancelamento ou expiração liberta o veículo.
+- Cancelamento ou expiração remove a reserva da disponibilidade; o estado do veículo é recalculado considerando outros contratos e intervalos.
 
 ### Contratos
 
 - Uma reserva ativa é necessária para formalizar um contrato.
 - Veículo de venda cria `ContractoVenda`; veículo de aluguer cria `ContractoAluguer`.
 - Duração de aluguer: um dia, dois dias, uma semana ou um mês. A data final é calculada a partir da data de início escolhida; a assinatura conserva a data/hora em que o contrato foi formalizado.
-- Depois da formalização, a reserva passa a `CONFIRMADA`; o veículo passa a `VENDIDO` ou `ALUGADO`.
+- Depois da formalização, a reserva passa a `CONFIRMADA`; uma venda passa a `VENDIDO`. Um aluguer futuro fica `RESERVADO` e passa a `ALUGADO` quando começa; ao terminar ou ser devolvido, o sistema liberta-o se não houver outra reserva futura.
 - A classe base `Contracto` possui campos para assinatura digital e imagem de assinatura, mas os serviços atuais criam os contratos com esses campos a `null`; não há fluxo de assinatura implementado.
 
 ## Estados e fluxos
@@ -130,8 +141,8 @@ O preço registado para um veículo de aluguer continua a ser a mensalidade. Par
 | Estado | Significado |
 |---|---|
 | `DISPONIVEL` | Pode ser reservado. |
-| `RESERVADO` | Está associado a uma reserva ativa. |
-| `ALUGADO` | O contrato de aluguer foi formalizado. |
+| `RESERVADO` | Tem uma reserva ativa ou confirmada para uma data futura. |
+| `ALUGADO` | O período de um contrato de aluguer está em curso. |
 | `VENDIDO` | O contrato de venda foi formalizado. |
 
 ### Estados da reserva
@@ -139,17 +150,17 @@ O preço registado para um veículo de aluguer continua a ser a mensalidade. Par
 | Estado | Significado |
 |---|---|
 | `ACTIVA` | Reserva dentro do prazo, elegível para confirmação ou cancelamento. |
-| `EXPIRADA` | O prazo de 48 horas terminou; o veículo é libertado. |
+| `EXPIRADA` | O prazo de 48 horas terminou; o intervalo deixa de bloquear novas reservas. |
 | `CONFIRMADA` | Reserva usada para formalizar um contrato. |
-| `CANCELADA` | Reserva cancelada pelo utilizador; o veículo é libertado. |
+| `CANCELADA` | Reserva cancelada; o intervalo deixa de bloquear novas reservas. |
 
-Fluxo normal: `DISPONIVEL` → `RESERVADO` → `ALUGADO` ou `VENDIDO`. Fluxos alternativos: `RESERVADO` → `DISPONIVEL` quando a reserva é cancelada ou expira. A atualização automática de expiração ocorre ao início de cada iteração do menu; não existe uma thread temporizada em segundo plano.
+Fluxo normal: `DISPONIVEL` → `RESERVADO` → `ALUGADO` ou `VENDIDO`. Um aluguer futuro pode ser reservado depois do fim do intervalo atual; a aplicação recalcula os estados ao início de cada iteração do menu. A expiração e a transição por calendário são atualizadas quando o menu é atualizado, não por uma thread temporizada.
 
 ## Concorrência
 
-A opção 10 em `MenuService.simularReservasConcorrentes()` inicia duas threads de pedido. Um `CountDownLatch` faz ambas aguardarem até estarem prontas e, em seguida, liberta-as para tentarem criar uma reserva para o mesmo veículo. A aplicação espera pelo fim das duas com `join()` e apresenta o resultado de cada pedido.
+A opção 10 em `MenuService.simularReservasConcorrentes()` inicia três threads de pedido. Um `CountDownLatch` faz as três aguardarem até estarem prontas e depois liberta-as para tentarem criar uma reserva para o mesmo veículo e intervalo. O teste permite escolher veículos de venda ou aluguer.
 
-O método `AutomozService.criarReserva()` é `synchronized`. Na mesma instância do serviço, apenas uma thread entra nesse método de cada vez. A primeira reserva o veículo; a segunda encontra o veículo já reservado e é recusada. Isto protege também a geração sequencial do ID e a alteração dos mapas durante esse fluxo.
+O método `AutomozService.criarReserva()` é `synchronized` e a operação SQL usa transação, bloqueio `SELECT ... FOR UPDATE` do veículo e verificação de interseção de datas. Isto protege inclusive quando duas instâncias do serviço disputam o mesmo veículo. A tabela `automoz_sequencias` coordena a geração de IDs.
 
 `AutomozService.formalizarContrato()` também cria uma thread para formalizar o contrato e espera imediatamente por ela com `join()`. Portanto, esse método executa o trabalho noutra thread, mas o chamador continua bloqueado até terminar; não permite que a interface prossiga em paralelo. A secção que altera contratos é sincronizada por `formalizarContratoComSeguranca()`.
 
@@ -196,9 +207,12 @@ Entradas em falta ou mal formatadas geram `IllegalArgumentException`; operaçõe
 
 ## Limitações atuais
 
-- Não há autenticação, permissões ou interface gráfica/web.
+- Não há gestão/criação de novas contas de funcionários pela interface; a conta inicial é criada por configuração e os funcionários autenticados podem alterar a própria palavra-passe.
 - O registo de contratos armazena referências aos objetos em memória; não existe emissão/armazenamento de documentos.
 - Os campos de assinatura digital não são produzidos nem verificados.
 - `Gestor` e `FuncionarioAtendimento` são modelos incompletos e não participam no fluxo implementado.
 - A atualização de reservas expiradas ocorre quando o menu é atualizado, e não exatamente no instante da expiração.
-- A sincronização Java cobre pedidos concorrentes dentro da mesma execução; não foi desenhada como mecanismo de bloqueio distribuído entre várias instâncias da aplicação.
+
+## Testes
+
+Com Connector/J disponível no repositório Maven e MySQL do XAMPP iniciado com o esquema/migração atualizados, execute `./tests/run-tests.ps1` no PowerShell. O conjunto de domínio valida emails, dados do cliente, carta, períodos e mensalidades. O teste de integração cria dados temporários para autenticação, duplicados, três reservas concorrentes para aluguer/venda, intervalos futuros e devolução; remove os dados temporários ao terminar.

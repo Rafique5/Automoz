@@ -7,6 +7,8 @@ import model.Veiculo;
 import model.PeriodoAluguer;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 public class ContractoAluguerService {
     public ContractoAluguer criar(String id, Cliente cliente, Veiculo veiculo, PeriodoAluguer periodo,
@@ -34,7 +36,9 @@ public class ContractoAluguerService {
         validar(contrato);
         if (contrato.getMesesLegados() != null)
             return contrato.getMensalidadeFixa() * contrato.getMesesLegados();
-        return contrato.getMensalidadeFixa() * contrato.getPeriodo().getDiasCobrados() / 30.0;
+        return BigDecimal.valueOf(contrato.getMensalidadeFixa())
+                .multiply(BigDecimal.valueOf(contrato.getPeriodo().getDiasCobrados()))
+                .divide(BigDecimal.valueOf(30), 2, RoundingMode.HALF_UP).doubleValue();
     }
 
     public boolean estaExpirado(ContractoAluguer contrato, LocalDateTime dataReferencia) {
